@@ -2791,6 +2791,8 @@ export class KnowledgePG extends KnowledgeStorage {
       )
     )`;
     return { sql, args: [...scopeIds, ...scopeIds, ...scopeIds, ...scopeIds, ...scopeIds, ...scopeIds] };
+  }
+
   async #markProposalConflicted(
     tx: Executor,
     proposal: KnowledgeProposal,
