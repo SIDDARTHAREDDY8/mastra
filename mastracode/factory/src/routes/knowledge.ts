@@ -317,6 +317,8 @@ interface ResolvedView {
   scopeIds: KnowledgeScopeIds;
   perspectiveKey: string;
   readableScopeIds: KnowledgeScopeIds;
+  /** Binding scope addresses whose imports this view may list. */
+  importScopeAddresses: ReadonlySet<string>;
   orgScopeId: string;
   resourceScopeId: string;
   threadScopeId?: string;
@@ -351,15 +353,36 @@ function importBinding(binding: string): { source?: string; scopeAddress?: strin
   return {};
 }
 
-function importScopeBelongsToView(scope: string | undefined, projectId: string, threadId?: string): boolean {
-  return (
-    scope === `resource:${projectId}` ||
-    (threadId !== undefined && scope === `resource:${projectId}:thread:${threadId}`)
+/**
+ * Import scopes visible from a view: readable scopes the access profile vouches
+ * for that the project owns. Other threads' scopes stay out of every view.
+ */
+function importScopeAddressesForView(input: {
+  projectId: string;
+  threadId?: string;
+  vouchedScopes: Array<{ address: string; scopeId: string }>;
+  readableScopeIds: readonly string[];
+}): ReadonlySet<string> {
+  const resourceAddress = `resource:${input.projectId}`;
+  const threadAddress = input.threadId ? `${resourceAddress}:thread:${input.threadId}` : undefined;
+  const readable = new Set(input.readableScopeIds);
+  return new Set(
+    input.vouchedScopes
+      .filter(({ address, scopeId }) => {
+        if (!readable.has(scopeId)) return false;
+        if (address === resourceAddress || address === threadAddress) return true;
+        return address.startsWith(`${resourceAddress}:`) && !address.startsWith(`${resourceAddress}:thread:`);
+      })
+      .map(({ address }) => address),
   );
 }
 
-function importRunBelongsToView(run: KnowledgeImportRun, projectId: string, threadId?: string): boolean {
-  return importScopeBelongsToView(importBinding(run.binding).scopeAddress, projectId, threadId);
+function importScopeBelongsToView(scope: string | undefined, importScopeAddresses: ReadonlySet<string>): boolean {
+  return scope !== undefined && importScopeAddresses.has(scope);
+}
+
+function importRunBelongsToView(run: KnowledgeImportRun, importScopeAddresses: ReadonlySet<string>): boolean {
+  return importScopeBelongsToView(importBinding(run.binding).scopeAddress, importScopeAddresses);
 }
 
 const KNOWLEDGE_APPROVALS_COUNT_CAP = 99;
@@ -703,7 +726,15 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
     resourceScopeId: string;
     threadId?: string;
     threadScopeId?: string;
-  }): Promise<{ scopeIds: KnowledgeScopeIds; rootScopeId: string; perspectiveKey: string } | undefined> {
+  }): Promise<
+    | {
+        scopeIds: KnowledgeScopeIds;
+        vouchedScopes: Array<{ address: string; scopeId: string }>;
+        rootScopeId: string;
+        perspectiveKey: string;
+      }
+    | undefined
+  > {
     const profile = await this.deps.accessProfile({
       request: input.c.req.raw,
       knowledge: input.knowledge,
@@ -747,11 +778,16 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
       [...scopesByAddress.keys()].map(address => input.store.getScopeAddress(address)),
     );
     if (resolvedScopes.some(scope => !scope)) return undefined;
-    const scopeIds = resolvedScopes.map(scope => scope!.scopeNodeId).sort();
+    const vouchedScopes = [...scopesByAddress.keys()].map((address, index) => ({
+      address,
+      scopeId: resolvedScopes[index]!.scopeNodeId,
+    }));
+    const scopeIds = vouchedScopes.map(scope => scope.scopeId).sort();
     const rootScope = await input.store.getScopeAddress(profile.rootScopeAddress);
     if (!rootScope) return undefined;
     return {
       scopeIds,
+      vouchedScopes,
       rootScopeId: rootScope.scopeNodeId,
       perspectiveKey: `${input.projectId}\u0000${input.userId}\u0000${profile.id}\u0000${knowledgeScopeIdsKey(scopeIds)}`,
     };
@@ -874,6 +910,12 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
     if (!readableScopeIds.includes(profile.rootScopeId)) {
       return { response: c.json({ error: threadId ? 'thread_not_found' : 'knowledge_not_found' }, 404) };
     }
+    const importScopeAddresses = importScopeAddressesForView({
+      projectId,
+      ...(threadId ? { threadId } : {}),
+      vouchedScopes: profile.vouchedScopes,
+      readableScopeIds,
+    });
     if (!threadId) {
       return {
         projectId,
@@ -883,6 +925,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
         scopeIds: profile.scopeIds,
         perspectiveKey,
         readableScopeIds,
+        importScopeAddresses,
         orgScopeId,
         resourceScopeId: profile.rootScopeId,
         pinScopes: [{ level: 'resource', scopeId: profile.rootScopeId }],
@@ -902,6 +945,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
       scopeIds: profile.scopeIds,
       perspectiveKey,
       readableScopeIds,
+      importScopeAddresses,
       orgScopeId,
       resourceScopeId,
       threadScopeId,
@@ -990,8 +1034,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
 
   async #projectImportRuns(input: {
     knowledge: Knowledge;
-    projectId: string;
-    threadId?: string;
+    importScopeAddresses: ReadonlySet<string>;
     scopeIds: KnowledgeScopeIds;
     importerId: string;
     binding?: string;
@@ -1014,7 +1057,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
         limit: 100,
       });
       for (const run of page.runs) {
-        if (!importRunBelongsToView(run, input.projectId, input.threadId)) continue;
+        if (!importRunBelongsToView(run, input.importScopeAddresses)) continue;
         if (input.trigger && run.triggerKind !== input.trigger) continue;
         if (input.from && run.queuedAt < input.from) continue;
         if (input.to && run.queuedAt > input.to) continue;
@@ -1048,7 +1091,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
               const bindings = Array.from(
                 new Map(declaredBindings.map(binding => [`${binding.source}\u0000${binding.scope}`, binding])).values(),
               )
-                .filter(binding => importScopeBelongsToView(binding.scope, resolved.projectId, resolved.threadId))
+                .filter(binding => importScopeBelongsToView(binding.scope, resolved.importScopeAddresses))
                 .map(binding => ({
                   source: binding.source,
                   binding: this.#mintHandle(
@@ -1061,8 +1104,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
               const lastRun = (
                 await this.#projectImportRuns({
                   knowledge: resolved.knowledge,
-                  projectId: resolved.projectId,
-                  threadId: resolved.threadId,
+                  importScopeAddresses: resolved.importScopeAddresses,
                   scopeIds: resolved.scopeIds,
                   importerId: importer.importerId,
                   limit: 1,
@@ -1118,8 +1160,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
           if (cursorHandle && !cursor) return c.json({ runs: [] });
           const page = await this.#projectImportRuns({
             knowledge: resolved.knowledge,
-            projectId: resolved.projectId,
-            threadId: resolved.threadId,
+            importScopeAddresses: resolved.importScopeAddresses,
             scopeIds: resolved.scopeIds,
             importerId,
             binding,
@@ -1158,7 +1199,7 @@ export class KnowledgeRoutes extends Route<KnowledgeRoutesDeps> {
           if (
             !run ||
             run.importerId !== importerId ||
-            !importRunBelongsToView(run, resolved.projectId, resolved.threadId)
+            !importRunBelongsToView(run, resolved.importScopeAddresses)
           ) {
             return c.json({ error: 'import_run_not_found' }, 404);
           }
