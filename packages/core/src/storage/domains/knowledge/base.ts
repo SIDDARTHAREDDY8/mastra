@@ -701,7 +701,6 @@ export abstract class KnowledgeStorage extends StorageDomain {
   }
   async deleteRecordBySource(_input: {
     id: string;
-    version: number;
     source: string;
     version: number;
     importRunId?: string;
