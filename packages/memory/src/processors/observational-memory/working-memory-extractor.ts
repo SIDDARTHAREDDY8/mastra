@@ -108,6 +108,15 @@ export class WorkingMemoryExtractor extends Extractor<string | Record<string, un
             return undefined;
           }
           document = await validateAgainstConfiguredSchema(configuredSchema, current);
+          // An empty document carries no facts; storing it would wipe working memory (#25907).
+          if (
+            typeof document === 'object' &&
+            document !== null &&
+            !Array.isArray(document) &&
+            Object.keys(document).length === 0
+          ) {
+            return undefined;
+          }
         }
 
         const workingMemory = typeof document === 'string' ? document : (JSON.stringify(document) ?? '');

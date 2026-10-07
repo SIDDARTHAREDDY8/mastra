@@ -508,6 +508,44 @@ describe('Extractor', () => {
     expect(stream.mock.calls[1][1].structuredOutput.jsonPromptInjection).toBe('inline');
   });
 
+  it('does not overwrite schema working memory when native output is {"working-memory":{}} (#25907)', async () => {
+    const memory = {
+      getMergedThreadConfig: vi.fn(() => ({
+        workingMemory: { enabled: true, schema: z.object({ profile: z.string().optional() }) },
+      })),
+      getWorkingMemoryTemplate: vi.fn(async () => ({ format: 'json', content: '{"type":"object"}' })),
+      getWorkingMemory: vi.fn(async () => '{"profile":"neo"}'),
+      updateWorkingMemory: vi.fn(async () => undefined),
+    } as any;
+    const [resolved] = await resolveExtractors([new WorkingMemoryExtractor()], {
+      source: 'observer',
+      threadId: 'thread-1',
+      resourceId: 'resource-1',
+      memory,
+    });
+    const stream = vi.fn().mockResolvedValue({ object: Promise.resolve({ 'working-memory': {} }) });
+
+    const result = await extractStructuredValues({
+      agent: { stream } as unknown as Agent<any, any, any, any>,
+      source: 'observer',
+      extractors: [resolved!],
+    });
+
+    expect(result.values).toEqual({ 'working-memory': {} });
+    expect(result.failures).toEqual([]);
+
+    await applyExtractorHooks({
+      source: 'observer',
+      extractors: [resolved!],
+      values: result.values,
+      threadId: 'thread-1',
+      resourceId: 'resource-1',
+      memory,
+    });
+
+    expect(memory.updateWorkingMemory).not.toHaveBeenCalled();
+  });
+
   it('falls back to system json prompt injection when inline support is not advertised', async () => {
     const priority = new Extractor({ name: 'Priority', instructions: 'Extract priority.', schema: z.string() });
     const stream = vi
@@ -687,6 +725,15 @@ describe('WorkingMemoryExtractor schema enforcement', () => {
     });
     return { memory, result };
   }
+
+  it('does not save a document that is empty once optional nulls are stripped (#25907)', async () => {
+    const { memory, result } = await runWorkingMemoryHook(z.object({ profile: z.string().optional() }), {
+      profile: null,
+    });
+
+    expect(result.failures).toBeUndefined();
+    expect(memory.updateWorkingMemory).not.toHaveBeenCalled();
+  });
 
   function createJsonModel(json: string) {
     return new MockLanguageModelV2({
