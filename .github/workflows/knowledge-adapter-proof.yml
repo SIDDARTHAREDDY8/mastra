@@ -1,0 +1,133 @@
+name: Knowledge adapter proof (branch-only)
+
+# Runs the service-backed store suites for the closed Knowledge v2 stack.
+# Lives only on ci/knowledge-v21-adapter-proof; never merged.
+on:
+  push:
+    branches: [ci/knowledge-v21-adapter-proof]
+
+permissions: {}
+
+jobs:
+  test:
+    if: ${{ github.repository == 'mastra-ai/mastra' }}
+    runs-on: starsling-ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        store: [libsql, pg, mysql, mongodb]
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+      TURBO_CACHE: remote:r
+    steps:
+      - uses: actions/checkout@e8d4307400f9427dba7cb98e488d6ab85f1cec5f
+        with:
+          persist-credentials: false
+      - name: Setup pnpm and Node.js
+        uses: ./.github/actions/setup-pnpm-node
+      - name: Build ${{ matrix.store }}
+        run: pnpm turbo --filter "@mastra/${{ matrix.store }}" build
+        env:
+          NODE_OPTIONS: '--max_old_space_size=8192'
+      - name: Run ${{ matrix.store }} tests
+        run: pnpm test
+        working-directory: stores/${{ matrix.store }}
+        env:
+          NODE_OPTIONS: '--max_old_space_size=8192'
+
+
+  service-e2e:
+    if: ${{ github.repository == 'mastra-ai/mastra' }}
+    runs-on: starsling-ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    name: service-e2e (${{ matrix.pkg }}${{ matrix.ref && ' @ main' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pkg: workflows/inngest
+            services: docker compose up -d --wait
+          - pkg: workflows/inngest
+            ref: main
+            services: docker compose up -d --wait
+          - pkg: workflows/temporal
+            services: docker compose up -d && for i in $(seq 1 60); do nc -z localhost 7233 && break; sleep 2; done && sleep 15
+          - pkg: pubsub/redis-streams
+            services: 'true'
+          - pkg: pubsub/valkey-streams
+            services: 'true'
+          - pkg: pubsub/google-cloud-pubsub
+            test: pnpm exec vitest run
+            services: docker compose -f ../../.dev/docker-compose.yaml up -d --wait pubsub-emulator && for i in $(seq 1 60); do nc -z localhost 8085 && break; sleep 2; done
+          - pkg: pubsub/google-cloud-pubsub
+            ref: main
+            test: pnpm exec vitest run
+            services: docker compose -f ../../.dev/docker-compose.yaml up -d --wait pubsub-emulator && for i in $(seq 1 60); do nc -z localhost 8085 && break; sleep 2; done
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+      TURBO_CACHE: remote:r
+    steps:
+      - uses: actions/checkout@e8d4307400f9427dba7cb98e488d6ab85f1cec5f
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.ref || github.sha }}
+      - name: Setup pnpm and Node.js
+        uses: ./.github/actions/setup-pnpm-node
+      - name: Build ${{ matrix.pkg }}
+        run: pnpm turbo --filter "./${{ matrix.pkg }}..." build
+        env:
+          NODE_OPTIONS: '--max_old_space_size=8192'
+      - name: Start services
+        run: ${{ matrix.services }}
+        working-directory: ${{ matrix.pkg }}
+      - name: Run ${{ matrix.pkg }} tests
+        run: ${{ matrix.test || 'pnpm test' }}
+        working-directory: ${{ matrix.pkg }}
+        env:
+          NODE_OPTIONS: '--max_old_space_size=8192'
+          PUBSUB_EMULATOR_HOST: localhost:8085
+
+  knowledge-playwright:
+    if: ${{ github.repository == 'mastra-ai/mastra' }}
+    runs-on: starsling-ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+      TURBO_CACHE: remote:r
+    steps:
+      - uses: actions/checkout@e8d4307400f9427dba7cb98e488d6ab85f1cec5f
+        with:
+          persist-credentials: false
+      - name: Setup pnpm and Node.js
+        uses: ./.github/actions/setup-pnpm-node
+      - name: Build Factory UI dependencies
+        run: pnpm turbo --filter "@internal/factory-ui^..." --filter "@mastra/factory^..." build
+        env:
+          NODE_OPTIONS: '--max_old_space_size=8192'
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: mastracode/factory-ui
+      - name: Run Knowledge journeys in proof mode
+        run: npx playwright test -c e2e/playwright.config.ts e2e/knowledge
+        working-directory: mastracode/factory-ui
+        env:
+          KNOWLEDGE_PROOF_OUTPUT: ${{ runner.temp }}/knowledge-proof
+      - name: Checksum proof artifacts
+        if: always()
+        run: cd "$RUNNER_TEMP/knowledge-proof" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: knowledge-playwright-proof
+          path: ${{ runner.temp }}/knowledge-proof
+          retention-days: 14
