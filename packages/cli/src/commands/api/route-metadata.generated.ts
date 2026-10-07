@@ -6662,6 +6662,7 @@ export const API_ROUTE_METADATA = {
     "bodyParams": [
       "requestContext",
       "resumeData",
+      "runId",
       "toolCallId"
     ],
     "hasQuery": true,

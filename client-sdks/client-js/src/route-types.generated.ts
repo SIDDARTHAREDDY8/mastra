@@ -23236,6 +23236,7 @@ export type PostAgentControllerControllerIdSessionsResourceIdToolSuspension_Quer
 
 export type PostAgentControllerControllerIdSessionsResourceIdToolSuspension_Body = {
   toolCallId: string;
+  runId?: string | undefined;
   resumeData: unknown;
   requestContext?:
     | {
