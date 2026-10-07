@@ -28,7 +28,7 @@ await knowledge.materializeScope({
 });
 ```
 
-Both calls are idempotent. Parent scopes and access grants you add to `structure` later are applied on the next `reconcile()`. A scope created by `materializeScope()` keeps the access it was created with, even if you later change its scope type.
+Both calls are idempotent. Parent scopes you add to or remove from `structure` later are applied on the next `reconcile()`, which also removes parent links that are no longer declared, along with the access they carried. Access grants in `structure` are applied only when a scope is first created; change access on an existing scope with `knowledge.shareScope()` and `knowledge.revokeScopeAccess()`. A scope created by `materializeScope()` keeps the access it was created with, even if you later change its scope type.
 
 Read the reconciled scopes back with the Knowledge store's `listScopeNodes()`. Pass `withinAddress` to read one scope and everything beneath it, `addresses` for exact scopes, or `ids` for exact scope nodes. Filters combine, so `{ withinAddress: 'org:acme', ids: [scopeId], limit: 1 }` checks whether one scope belongs to an org. Follow `nextCursor` for more pages, so one tenant's read never depends on how many scopes other tenants have.
 
