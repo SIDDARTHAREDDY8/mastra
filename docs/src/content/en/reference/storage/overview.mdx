@@ -454,8 +454,8 @@ Knowledge tables are created the first time Knowledge is used, for example when 
 
 Databases initialized by earlier releases contain v1 Knowledge tables. The current Knowledge storage uses a different schema and doesn't migrate v1 data. What happens on first use depends on what Mastra finds:
 
-- **Unmodified v1 tables, with or without rows**: Mastra drops them and creates the current schema. Any v1 Knowledge data is deleted. Other storage domains aren't touched.
-- **A Knowledge schema Mastra doesn't recognize**, such as extra tables, indexes, views, or triggers on the Knowledge tables: Knowledge refuses to start and throws `KnowledgeSchemaResetRequiredError`. Mastra doesn't change or delete any tables, so your existing Knowledge data stays in place.
+- **Empty, unmodified v1 tables**: Mastra drops them and creates the current schema. Nothing is lost.
+- **v1 tables with rows, or a Knowledge schema Mastra doesn't recognize**: Knowledge refuses to start and throws `KnowledgeSchemaError`. Mastra doesn't change or delete any tables, so your existing Knowledge data stays in place.
 
 Other storage domains keep working while Knowledge is blocked.
 
@@ -485,4 +485,4 @@ await storage.stores?.knowledge?.dangerouslyReset()
 
 Set `disableInit: true` on the store, or set the `MASTRA_DISABLE_STORAGE_INIT=true` environment variable, to stop `getStore('knowledge')` from initializing Knowledge. This also turns off automatic initialization for every other domain, so you must create those tables yourself, for example by calling `storage.init()`.
 
-With initialization deferred, call `storage.initKnowledge()` when you're ready to activate Knowledge. It runs `storage.init()` first, which creates the other domains' tables, then runs the same Knowledge checks. It replaces unmodified v1 tables and throws `KnowledgeSchemaResetRequiredError` for a schema Mastra doesn't recognize.
+With initialization deferred, call `storage.initKnowledge()` when you're ready to activate Knowledge. It runs `storage.init()` first, which creates the other domains' tables, then runs the same Knowledge checks and throws `KnowledgeSchemaError` in the same cases.
