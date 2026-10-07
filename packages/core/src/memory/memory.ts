@@ -854,6 +854,8 @@ https://mastra.ai/en/docs/memory/overview`,
               typeof effectiveConfig.workingMemory === 'object' &&
               'version' in effectiveConfig.workingMemory &&
               effectiveConfig.workingMemory.version === 'vnext',
+            readOnly:
+              typeof effectiveConfig.workingMemory === 'object' && effectiveConfig.workingMemory.agentManaged === false,
             templateProvider: this,
           }),
         );
