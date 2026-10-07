@@ -454,8 +454,8 @@ Knowledge tables are created the first time Knowledge is used, for example when 
 
 Databases initialized by earlier releases contain v1 Knowledge tables. The current Knowledge storage uses a different schema and doesn't migrate v1 data. What happens on first use depends on what Mastra finds:
 
-- **Empty, unmodified v1 tables**: Mastra drops them and creates the current schema. Nothing is lost.
-- **v1 tables with rows, or a Knowledge schema Mastra doesn't recognize**: Knowledge refuses to start and throws `KnowledgeSchemaError`. Mastra doesn't change or delete any tables, so your existing Knowledge data stays in place.
+- **Unmodified v1 tables, with or without rows**: Mastra drops them and creates the current schema. Any v1 Knowledge data is deleted. Other storage domains aren't touched.
+- **A Knowledge schema Mastra doesn't recognize**, such as missing or extra tables, indexes, views, or triggers on the Knowledge tables: Knowledge refuses to start and throws `KnowledgeSchemaError`. Mastra doesn't change or delete any tables, so your existing Knowledge data stays in place.
 
 Other storage domains keep working while Knowledge is blocked.
 
